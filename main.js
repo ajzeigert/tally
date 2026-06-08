@@ -7,9 +7,10 @@ import { createInterface } from "node:readline/promises";
 import { loadConfig, configCommand } from "./src/config.js";
 import { listCommand } from "./src/list.js";
 import { parseTimesheet, filterByRange, clientSlug } from "./src/timesheet.js";
-import { loadHistory, saveHistory, nextInvoiceNumber, findByPeriodAndClient, outstandingBalance, filterByClient, migrateLocalHistory, GLOBAL_HISTORY_PATH } from "./src/history.js";
+import { loadHistory, saveHistory, nextInvoiceNumber, findByPeriodAndClient, priorOutstanding, migrateLocalHistory, GLOBAL_HISTORY_PATH } from "./src/history.js";
 import { renderInvoice } from "./src/html.js";
 import { htmlToPdf } from "./src/pdf.js";
+import { renderInvoiceXlsx } from "./src/xlsx.js";
 import { loadTemplate, templateCommand } from "./src/template.js";
 import { initCommand } from "./src/init.js";
 import { trackCommand } from "./src/track.js";
@@ -35,8 +36,11 @@ ${bold("Usage:")}
   tally template                Open or reset the invoice HTML template
   tally invoice --period <p>    Generate invoice for a period (in current dir)
   tally invoice --period <p> --dirs <path...>              Generate across multiple repos
+  tally invoice --period <p> --format <pdf|xlsx>           Choose output format (default pdf)
   tally invoice --period <p> --include-hours|--no-hours    Skip hours prompt (fee mode)
   tally track <sub>             Time tracking (start, pause, resume, stop, status, discard)
+  tally track start --ago 2h30m            Start a timer as if it began that long ago
+  tally track start --since 9:30           Start a timer as if it began at that time today
   tally status                  Show current timer status
   tally edit                    Open tally.yml in your editor
   tally reset                   Remove global tally config and template
@@ -51,7 +55,7 @@ ${bold("Period formats:")}
 
 const OVERRIDE_FIELDS = ["name", "email", "phone", "location", "payment_terms"];
 
-async function generate(periodInput, dirs, flags = []) {
+async function generate(periodInput, dirs, flags = [], format = "pdf") {
   let period;
   try {
     period = resolvePeriod(periodInput);
@@ -113,8 +117,8 @@ async function generate(periodInput, dirs, flags = []) {
   }
 
   const invoiceNumber = existing?.number ?? nextInvoiceNumber(history);
-  const clientHistory = filterByClient(history, slug);
-  const outstanding = outstandingBalance(clientHistory);
+  // Exclude this invoice so a regeneration never counts itself as a prior balance.
+  const outstanding = priorOutstanding(history, slug, invoiceNumber);
   const today = new Date().toISOString().slice(0, 10);
 
   let invoiceData;
@@ -156,12 +160,16 @@ async function generate(periodInput, dirs, flags = []) {
 
   await ensureExclude(config.git_exclude);
 
-  const customTemplate = await loadTemplate();
-  const html = renderInvoice(invoiceData, customTemplate);
-
-  const filename = `${slug}-${invoiceNumber}-${period.label.replace(/\s/g, "-").replace(",", "")}-tally-invoice.pdf`;
+  const base = `${slug}-${invoiceNumber}-${period.label.replace(/\s/g, "-").replace(",", "")}-tally-invoice`;
+  const filename = `${base}.${format}`;
   console.log(dim(`Generating ${filename}...`));
-  await htmlToPdf(html, filename);
+  if (format === "xlsx") {
+    await renderInvoiceXlsx(invoiceData, filename);
+  } else {
+    const customTemplate = await loadTemplate();
+    const html = renderInvoice(invoiceData, customTemplate);
+    await htmlToPdf(html, filename);
+  }
 
   const record = {
     number: invoiceNumber, client: slug, dirs: resolvedDirs,
@@ -213,8 +221,18 @@ switch (command) {
       }
     }
 
-    const flags = args.filter((a) => a.startsWith("--") && a !== "--period" && a !== "--dirs");
-    await generate(periodInput, dirs, flags);
+    const formatIdx = args.indexOf("--format");
+    let format = "pdf";
+    if (formatIdx !== -1) {
+      format = (args[formatIdx + 1] || "").toLowerCase();
+      if (format !== "pdf" && format !== "xlsx") {
+        console.error(red("--format must be 'pdf' or 'xlsx'."));
+        process.exit(1);
+      }
+    }
+
+    const flags = args.filter((a, i) => a.startsWith("--") && a !== "--period" && a !== "--dirs" && a !== "--format" && args[i - 1] !== "--format");
+    await generate(periodInput, dirs, flags, format);
     break;
   }
   case "track": await trackCommand(args); break;

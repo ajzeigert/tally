@@ -54,6 +54,15 @@ export function outstandingBalance(history) {
     .reduce((sum, i) => sum + i.total, 0);
 }
 
+// Unpaid balance for a client from invoices OTHER than the one being generated.
+// Excluding currentNumber prevents a regenerated invoice from counting itself.
+export function priorOutstanding(history, client, currentNumber) {
+  const prior = history.invoices.filter(
+    (i) => i.client === client && i.number !== currentNumber,
+  );
+  return outstandingBalance({ invoices: prior });
+}
+
 export function deleteInvoice(history, number) {
   const idx = history.invoices.findIndex((i) => i.number === number);
   if (idx === -1) return null;

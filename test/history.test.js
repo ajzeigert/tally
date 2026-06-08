@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { filterByClient, migrateLocalHistory, loadHistory, saveHistory, deleteInvoice, editInvoice } from '../src/history.js';
+import { filterByClient, migrateLocalHistory, loadHistory, saveHistory, deleteInvoice, editInvoice, outstandingBalance, priorOutstanding } from '../src/history.js';
 
 function withTempDir(fn) {
   return async () => {
@@ -101,6 +101,54 @@ test('migrateLocalHistory: no-op when local file does not exist', withTempDir(as
   const global = await loadHistory(globalPath);
   assert.deepEqual(global.invoices, []);
 }));
+
+// --- outstandingBalance ---
+
+test('outstandingBalance: sums totals of unpaid invoices only', () => {
+  const history = {
+    invoices: [
+      { number: 1, client: 'acme', dirs: [], period: 'month 2026-04', generated: '2026-04-30', total: 1000, status: 'unpaid', file: 'a.pdf' },
+      { number: 2, client: 'acme', dirs: [], period: 'month 2026-05', generated: '2026-05-31', total: 2000, status: 'paid', file: 'b.pdf' },
+      { number: 3, client: 'acme', dirs: [], period: 'month 2026-06', generated: '2026-06-30', total: 500, status: 'unpaid', file: 'c.pdf' },
+    ],
+  };
+  assert.equal(outstandingBalance(history), 1500);
+});
+
+// --- priorOutstanding ---
+
+test('priorOutstanding: excludes the invoice being generated', () => {
+  // Regression: invoice #1 being regenerated must not count itself as a prior balance.
+  const history = {
+    invoices: [
+      { number: 1, client: 'outerspatial', dirs: [], period: 'month 2026-05', generated: '2026-06-01', total: 750, status: 'unpaid', file: 'a.pdf' },
+    ],
+  };
+  assert.equal(priorOutstanding(history, 'outerspatial', 1), 0);
+});
+
+test('priorOutstanding: counts other unpaid invoices for the same client', () => {
+  const history = {
+    invoices: [
+      { number: 1, client: 'outerspatial', dirs: [], period: 'month 2026-04', generated: '2026-04-30', total: 750, status: 'unpaid', file: 'a.pdf' },
+      { number: 2, client: 'outerspatial', dirs: [], period: 'month 2026-05', generated: '2026-05-31', total: 1462.5, status: 'unpaid', file: 'b.pdf' },
+    ],
+  };
+  // Generating/regenerating #2 should see only #1 ($750) outstanding.
+  assert.equal(priorOutstanding(history, 'outerspatial', 2), 750);
+});
+
+test('priorOutstanding: ignores other clients and paid invoices', () => {
+  const history = {
+    invoices: [
+      { number: 1, client: 'acme', dirs: [], period: 'month 2026-04', generated: '2026-04-30', total: 999, status: 'unpaid', file: 'a.pdf' },
+      { number: 2, client: 'outerspatial', dirs: [], period: 'month 2026-04', generated: '2026-04-30', total: 300, status: 'paid', file: 'b.pdf' },
+      { number: 3, client: 'outerspatial', dirs: [], period: 'month 2026-05', generated: '2026-05-31', total: 1462.5, status: 'unpaid', file: 'c.pdf' },
+    ],
+  };
+  // New invoice #4 for outerspatial: only #3 ($1462.50) counts.
+  assert.equal(priorOutstanding(history, 'outerspatial', 4), 1462.5);
+});
 
 // --- deleteInvoice ---
 

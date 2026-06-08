@@ -30,6 +30,30 @@ function formatElapsed(ms) {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
+// Parse a relative duration like "45m", "2h", "2h30m", "90m" into milliseconds.
+// Returns null for anything unrecognized (bare numbers, wrong order, junk).
+export function parseAgo(str) {
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?$/.exec(str.trim());
+  if (!m || (!m[1] && !m[2])) return null;
+  const hours = Number(m[1] || 0);
+  const minutes = Number(m[2] || 0);
+  return (hours * 60 + minutes) * 60 * 1000;
+}
+
+// Parse a 24-hour clock time "H:MM"/"HH:MM" into a timestamp on `now`'s date.
+// Returns null for unparseable strings or out-of-range hour/minute. Does not
+// reject times in the future — the caller compares against `now`.
+export function parseSince(str, now) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(str.trim());
+  if (!m) return null;
+  const hours = Number(m[1]);
+  const minutes = Number(m[2]);
+  if (hours > 23 || minutes > 59) return null;
+  const d = new Date(now);
+  d.setHours(hours, minutes, 0, 0);
+  return d.getTime();
+}
+
 function roundHours(hours, incrementMinutes) {
   const increments = hours * 60 / incrementMinutes;
   return Math.ceil(increments) * incrementMinutes / 60;
@@ -123,14 +147,20 @@ export async function trackStart(args, _ask = null) {
     await resolveStaleSession(existing, _ask);
   }
 
-  // Parse --description and --live flags
+  // Parse --description, --live, --ago, and --since flags
   let description = "";
   let live = false;
+  let ago = null;
+  let since = null;
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--description" || args[i] === "-d") && args[i + 1]) {
       description = args[++i];
     } else if (args[i] === "--live" || args[i] === "-l") {
       live = true;
+    } else if (args[i] === "--ago" && args[i + 1] !== undefined) {
+      ago = args[++i];
+    } else if (args[i] === "--since" && args[i + 1] !== undefined) {
+      since = args[++i];
     } else if (!args[i].startsWith("-")) {
       description = args[i];
     }
@@ -143,7 +173,34 @@ export async function trackStart(args, _ask = null) {
   }
 
   const now = Date.now();
-  const data = { startedAt: now, firstStartedAt: now, accumulatedMs: 0, description };
+  let startedAt = now;
+
+  if (ago !== null && since !== null) {
+    console.error(red("Use only one of --ago or --since, not both."));
+    process.exit(1);
+  } else if (ago !== null) {
+    const offset = parseAgo(ago);
+    if (offset === null) {
+      console.error(red(`Invalid --ago duration: "${ago}"`));
+      console.error(dim("Examples: 45m, 2h, 2h30m"));
+      process.exit(1);
+    }
+    startedAt = now - offset;
+  } else if (since !== null) {
+    const ts = parseSince(since, now);
+    if (ts === null) {
+      console.error(red(`Invalid --since time: "${since}"`));
+      console.error(dim("Use 24-hour H:MM, e.g. 9:30 or 14:00"));
+      process.exit(1);
+    }
+    if (ts > now) {
+      console.error(red(`--since time "${since}" is in the future.`));
+      process.exit(1);
+    }
+    startedAt = ts;
+  }
+
+  const data = { startedAt, firstStartedAt: startedAt, accumulatedMs: 0, description };
   await saveTracking(data);
   console.log(green(`Timer started: "${description}"`));
 
@@ -305,6 +362,8 @@ export async function trackCommand(args) {
 
 ${bold("Usage:")}
   tally track start -d "description" [--live]   Start a timer
+    [--ago 2h30m]                               ...as if it began that long ago
+    [--since 9:30]                              ...as if it began at that time today
   tally track pause                             Pause the running timer
   tally track resume                            Resume a paused timer
   tally track stop                              Stop and write to tally.yml

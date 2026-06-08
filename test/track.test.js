@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { trackStart, trackStop, formatElapsedLong } from '../src/track.js';
+import { trackStart, trackStop, formatElapsedLong, parseAgo, parseSince } from '../src/track.js';
 
 // Run `fn` inside a fresh temp directory, then clean up.
 function withTempDir(fn) {
@@ -63,6 +63,110 @@ test('formatElapsedLong — exactly 1 day', () => {
 test('formatElapsedLong — 0ms', () => {
   assert.equal(formatElapsedLong(0), '0m');
 });
+
+// --- parseAgo ---
+
+test('parseAgo — minutes only', () => {
+  assert.equal(parseAgo('45m'), 45 * 60 * 1000);
+});
+
+test('parseAgo — hours only', () => {
+  assert.equal(parseAgo('2h'), 2 * 60 * 60 * 1000);
+});
+
+test('parseAgo — hours and minutes', () => {
+  assert.equal(parseAgo('2h30m'), (2 * 60 + 30) * 60 * 1000);
+});
+
+test('parseAgo — minutes greater than 59', () => {
+  assert.equal(parseAgo('90m'), 90 * 60 * 1000);
+});
+
+test('parseAgo — invalid forms return null', () => {
+  assert.equal(parseAgo('abc'), null);
+  assert.equal(parseAgo('5'), null);
+  assert.equal(parseAgo(''), null);
+  assert.equal(parseAgo('2x'), null);
+  assert.equal(parseAgo('30m2h'), null);
+});
+
+// --- parseSince ---
+
+test('parseSince — H:MM today', () => {
+  const now = new Date('2026-06-08T15:00:00').getTime();
+  const ts = parseSince('9:30', now);
+  const d = new Date(ts);
+  assert.equal(d.getHours(), 9);
+  assert.equal(d.getMinutes(), 30);
+  assert.equal(new Date(ts).toDateString(), new Date(now).toDateString());
+});
+
+test('parseSince — HH:MM today', () => {
+  const now = new Date('2026-06-08T15:00:00').getTime();
+  const ts = parseSince('14:00', now);
+  const d = new Date(ts);
+  assert.equal(d.getHours(), 14);
+  assert.equal(d.getMinutes(), 0);
+});
+
+test('parseSince — invalid forms return null', () => {
+  const now = Date.now();
+  assert.equal(parseSince('25:00', now), null);
+  assert.equal(parseSince('9:99', now), null);
+  assert.equal(parseSince('nine', now), null);
+  assert.equal(parseSince('930', now), null);
+  assert.equal(parseSince('', now), null);
+});
+
+// --- backdated trackStart ---
+
+test('trackStart: --ago backdates startedAt and firstStartedAt',
+  withTempDir(async () => {
+    const before = Date.now();
+    await trackStart(['new task', '--ago', '45m']);
+    const after = Date.now();
+
+    const tracking = JSON.parse(readFileSync('.tally-tracking', 'utf-8'));
+    const offset = 45 * 60 * 1000;
+    assert.ok(tracking.startedAt >= before - offset - 50);
+    assert.ok(tracking.startedAt <= after - offset);
+    assert.equal(tracking.startedAt, tracking.firstStartedAt);
+    assert.equal(tracking.accumulatedMs, 0);
+    assert.equal(tracking.description, 'new task');
+  })
+);
+
+test('trackStart: --ago and --since together → error, no tracking file',
+  withTempDir(async () => {
+    const exitCode = await captureExit(() =>
+      trackStart(['task', '--ago', '45m', '--since', '9:30']));
+    assert.equal(exitCode, 1);
+    assert.ok(!existsSync('.tally-tracking'));
+  })
+);
+
+test('trackStart: --since in the future → error, no tracking file',
+  withTempDir(async () => {
+    // Build a clock time guaranteed to be later than now.
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+    const hh = String(future.getHours()).padStart(2, '0');
+    const mm = String(future.getMinutes()).padStart(2, '0');
+
+    const exitCode = await captureExit(() =>
+      trackStart(['task', '--since', `${hh}:${mm}`]));
+    assert.equal(exitCode, 1);
+    assert.ok(!existsSync('.tally-tracking'));
+  })
+);
+
+test('trackStart: invalid --ago → error, no tracking file',
+  withTempDir(async () => {
+    const exitCode = await captureExit(() =>
+      trackStart(['task', '--ago', 'bogus']));
+    assert.equal(exitCode, 1);
+    assert.ok(!existsSync('.tally-tracking'));
+  })
+);
 
 // --- resolveStaleSession (tested via trackStart) ---
 

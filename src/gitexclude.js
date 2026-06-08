@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 
-const ENTRIES = ["tally.yml", "*-tally-invoice.pdf", ".tally-tracking"];
+const ENTRIES = ["tally.yml", "*-tally-invoice.pdf", "*-tally-invoice.xlsx", ".tally-tracking"];
 
 export function getGitDir() {
   try {
