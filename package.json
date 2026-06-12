@@ -1,16 +1,38 @@
 {
-  "name": "@zeigert/tally",
-  "version": "0.1.0",
-  "type": "module",
-  "bin": {
-    "tally": "./main.js"
-  },
-  "scripts": {
-    "test": "node --test test/*.test.js"
-  },
-  "dependencies": {
-    "exceljs": "^4.4.0",
-    "js-yaml": "^4.1.0",
-    "playwright": "^1.59.0"
-  }
+	"name": "@zeigert/tally",
+	"version": "0.1.0",
+	"type": "module",
+	"bin": {
+		"tally": "main.js"
+	},
+	"scripts": {
+		"test": "node --test test/*.test.js"
+	},
+	"dependencies": {
+		"exceljs": "^4.4.0",
+		"js-yaml": "^4.1.0",
+		"playwright": "^1.59.0"
+	},
+	"description": "Track time using YAML files, produce XLSX and PDF invoices, all from the command line",
+	"main": "main.js",
+	"directories": {
+		"test": "test"
+	},
+	"devDependencies": {},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ajzeigert/tally.git"
+	},
+	"keywords": [
+		"typescript",
+		"javascript",
+		"cli",
+		"time-tracking"
+	],
+	"author": "Andy Zeigert",
+	"license": "ISC",
+	"bugs": {
+		"url": "https://github.com/ajzeigert/tally/issues"
+	},
+	"homepage": "https://github.com/ajzeigert/tally#readme"
 }
